@@ -11,7 +11,11 @@ import {
   ConfigurationResolver,
   DefaultConfigurationResolver,
 } from './binding-config';
-import {BindingFilter, filterByKey, filterByTag} from './binding-filter';
+import {
+  BindingFilter,
+  filterByKey,
+  filterByTag,
+} from './binding-filter';
 import {BindingAddress, BindingKey} from './binding-key';
 import {BindingComparator} from './binding-sorter';
 import {
