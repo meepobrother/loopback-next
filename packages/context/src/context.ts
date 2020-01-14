@@ -6,7 +6,7 @@
 import debugFactory from 'debug';
 import {EventEmitter} from 'events';
 import {v1 as uuidv1} from 'uuid';
-import {Binding, BindingTag} from './binding';
+import {Binding, BindingEventListener, BindingTag} from './binding';
 import {
   ConfigurationResolver,
   DefaultConfigurationResolver,
@@ -15,6 +15,7 @@ import {
   BindingFilter,
   filterByKey,
   filterByTag,
+  isBindingTagFilter,
 } from './binding-filter';
 import {BindingAddress, BindingKey} from './binding-key';
 import {BindingComparator} from './binding-sorter';
@@ -81,6 +82,24 @@ export class Context extends EventEmitter {
   protected readonly registry: Map<string, Binding> = new Map();
 
   /**
+   * Index for bindings by tag names
+   */
+  protected readonly bindingsIndexedByTag: Map<
+    string,
+    Set<Readonly<Binding<unknown>>>
+  > = new Map();
+
+  /**
+   * A listener for binding events
+   */
+  private bindingEventListener: BindingEventListener;
+
+  /**
+   * A listener to maintain tag index for bindings
+   */
+  private tagIndexListener: ContextEventListener;
+
+  /**
    * Parent context
    */
   protected _parent?: Context;
@@ -144,6 +163,30 @@ export class Context extends EventEmitter {
     }
     this._parent = _parent;
     this.name = name ?? uuidv1();
+    this.setupTagIndexForBindings();
+  }
+
+  /**
+   * Set up context/binding listeners and refresh index for bindings by tag
+   */
+  private setupTagIndexForBindings() {
+    this.bindingEventListener = (binding, event) => {
+      if (event === 'tag') {
+        this.updateTagIndexForBinding(binding);
+      }
+    };
+    this.tagIndexListener = (binding, context, event) => {
+      if (context !== this) return;
+      if (event === 'bind') {
+        this.updateTagIndexForBinding(binding);
+        binding.on('changed', this.bindingEventListener);
+      } else if (event === 'unbind') {
+        this.removeTagIndexForBinding(binding);
+        binding.removeListener('changed', this.bindingEventListener);
+      }
+    };
+    this.on('bind', this.tagIndexListener);
+    this.on('unbind', this.tagIndexListener);
   }
 
   /**
@@ -563,6 +606,8 @@ export class Context extends EventEmitter {
       this._parent.removeListener('unbind', this.parentEventListener);
       this.parentEventListener = undefined;
     }
+    this.removeListener('bind', this.tagIndexListener);
+    this.removeListener('unbind', this.tagIndexListener);
   }
 
   /**
@@ -617,6 +662,32 @@ export class Context extends EventEmitter {
   }
 
   /**
+   * Remove tag index for the given binding
+   * @param binding - Binding object
+   */
+  private removeTagIndexForBinding(binding: Readonly<Binding<unknown>>) {
+    for (const [, bindings] of this.bindingsIndexedByTag) {
+      bindings.delete(binding);
+    }
+  }
+
+  /**
+   * Update tag index for the given binding
+   * @param binding - Binding object
+   */
+  private updateTagIndexForBinding(binding: Readonly<Binding<unknown>>) {
+    this.removeTagIndexForBinding(binding);
+    for (const tag of binding.tagNames) {
+      let bindings = this.bindingsIndexedByTag.get(tag);
+      if (bindings == null) {
+        bindings = new Set();
+        this.bindingsIndexedByTag.set(tag, bindings);
+      }
+      bindings.add(binding);
+    }
+  }
+
+  /**
    * Check if a binding exists with the given key in the local context without
    * delegating to the parent context
    * @param key - Binding key
@@ -667,6 +738,11 @@ export class Context extends EventEmitter {
   find<ValueType = BoundValue>(
     pattern?: string | RegExp | BindingFilter,
   ): Readonly<Binding<ValueType>>[] {
+    // Optimize if the binding filter is for tags
+    if (typeof pattern === 'function' && isBindingTagFilter(pattern)) {
+      return this._findByTagIndex(pattern.bindingTagPattern);
+    }
+
     const bindings: Readonly<Binding<ValueType>>[] = [];
     const filter = filterByKey(pattern);
 
@@ -696,6 +772,65 @@ export class Context extends EventEmitter {
     tagFilter: BindingTag | RegExp,
   ): Readonly<Binding<ValueType>>[] {
     return this.find(filterByTag(tagFilter));
+  }
+
+  /**
+   * Find bindings by tag leveraging indexes
+   * @param tag - Tag name pattern or name/value pairs
+   */
+  protected _findByTagIndex<ValueType = BoundValue>(
+    tag: BindingTag | RegExp,
+  ): Readonly<Binding<ValueType>>[] {
+    let tagNames: string[];
+    // A flag to control if a union of matched bindings should be created
+    let union = false;
+    if (tag instanceof RegExp) {
+      // For wildcard/regexp, a union of matched bindings is desired
+      union = true;
+      // Find all matching tag names
+      tagNames = [];
+      for (const t of this.bindingsIndexedByTag.keys()) {
+        if (tag.test(t)) {
+          tagNames.push(t);
+        }
+      }
+    } else if (typeof tag === 'string') {
+      tagNames = [tag];
+    } else {
+      tagNames = Object.keys(tag);
+    }
+    let filter: BindingFilter | undefined;
+    let bindings: Set<Readonly<Binding<ValueType>>> | undefined;
+    for (const t of tagNames) {
+      const bindingsByTag = this.bindingsIndexedByTag.get(t);
+      if (bindingsByTag == null) break; // One of the tags is not found
+      filter = filter ?? filterByTag(tag);
+      const matched = new Set(Array.from(bindingsByTag).filter(filter)) as Set<
+        Readonly<Binding<ValueType>>
+      >;
+      if (!union && matched.size === 0) break; // One of the tag name/value is not found
+      if (bindings == null) {
+        // First set of bindings matching the tag
+        bindings = matched;
+      } else {
+        if (union) {
+          matched.forEach(b => bindings?.add(b));
+        } else {
+          // Now need to find intersected bindings against visited tags
+          const intersection = new Set<Readonly<Binding<ValueType>>>();
+          bindings.forEach(b => {
+            if (matched.has(b)) {
+              intersection.add(b);
+            }
+          });
+          bindings = intersection;
+        }
+        if (!union && bindings.size === 0) break;
+      }
+    }
+    const currentBindings = bindings == null ? [] : Array.from(bindings);
+    const parentBindings = this._parent && this._parent?._findByTagIndex(tag);
+    return this._mergeWithParent(currentBindings, parentBindings);
   }
 
   protected _mergeWithParent<ValueType>(
