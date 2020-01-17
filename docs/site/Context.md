@@ -258,6 +258,27 @@ emitted for the existing binding followed by a `bind` event for the new binding.
 If a context has a parent, binding events from the parent are re-emitted on the
 context when the binding key does not exist within the current context.
 
+A context event listener should conform to the following signature:
+
+```ts
+/**
+ * Synchronous event listener for the `Context` as en event emitter
+ */
+export type ContextEventListener = (
+  binding: Readonly<Binding<unknown>>, // Binding to be added or removed
+  context: Context, // The source context
+  event: string, // 'bind' or 'unbind'
+) => void;
+```
+
+By default, `maxListeners` is set to `Infinity` for context objects to avoid
+[memory leak warnings](https://github.com/strongloop/loopback-next/issues/4363).
+The value can be reset as follows:
+
+```ts
+ctx.setMaxListeners(128);
+```
+
 ## Context observers
 
 Bindings can be added or removed to a context object. With emitted context
