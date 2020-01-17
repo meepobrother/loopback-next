@@ -510,7 +510,7 @@ This remoting hook can be rewritten to a LoopBack 4 interceptor as follows:
 ```ts
 class WarnAnonymousInterceptor implements Provider<Interceptor> {
   constructor(
-    @inject.getter(SecurityBindings.USER)
+    @inject.getter(SecurityBindings.USER, {optional: true})
     private getCurrentUser: Getter<UserProfile>,
   ) {}
 
@@ -526,3 +526,11 @@ class WarnAnonymousInterceptor implements Provider<Interceptor> {
   }
 }
 ```
+
+Please note the current user must be injected as an optional value, because the
+value is available for authenticated endpoints only. In a typical application,
+not all endpoints are decorated with the `@authenticate` decorator. If you leave
+the injection as required (that's the default), then you will get a binding
+error when an unauthenticated endpoint is accessed. See
+[Using the Authentication Decorator](../../Loopback-component-authentication.html#using-the-authentication-decorator)
+for more details.
