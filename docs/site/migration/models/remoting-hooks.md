@@ -299,7 +299,7 @@ export class ProductController {
 
 ## Accessing context data
 
-In LoopBack 3, a remoting hooks receives a context object providing both
+In LoopBack 3, a remoting hook receives a context object providing both
 transport-specific data like the HTTP request & response objects and
 transport-independent data like the array of input arguments for the remote
 method and the result of remote method invocation.
