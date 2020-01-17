@@ -10,7 +10,7 @@ on the following areas:
 - offer some level of tooling support to make the migration is easier
 - fill in feature parity gaps by either implementing the features in LB4 or
   recommending a solution using existing libraries
-- Integrate LoopBack 4 into IBM API Connect 
+- Integrate LoopBack 4 into IBM API Connect
 
 ### Goal#2 - Keep adopting latest technologies to stay relevant
 
